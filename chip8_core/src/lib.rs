@@ -36,6 +36,7 @@ pub struct Emulator {
     keys: [bool; NUM_KEYS],
     dt: u8,
     st: u8,
+    pub draw_completed: bool,
 }
 
 impl Emulator {
@@ -51,6 +52,7 @@ impl Emulator {
             keys: [false; NUM_KEYS],
             dt: 0,
             st: 0,
+            draw_completed: true,
         };
 
         new_emulator.ram[..FONTSET_SIZE].copy_from_slice(&FONTSET);
@@ -102,7 +104,7 @@ impl Emulator {
         let end = start + data.len();
         self.ram[start..end].copy_from_slice(data);
     }
-    
+
     fn fetch(&mut self) -> u16 {
         let higher_byte = self.ram[self.pc as usize] as u16;
         let lower_byte = self.ram[self.pc as usize + 1] as u16;
@@ -288,24 +290,19 @@ impl Emulator {
 
                     // iterate over each column in the current row
                     for x_line in 0..8 {
+                        
                         // this fetches the value of the current bit with a mask.
                         if (pixels & (0b1000_0000 >> x_line)) != 0 {
-                            // sprites always wrap around the screen, so we use modulo
                             let x = (x_coord + x_line) as usize % SCREEN_WIDTH;
                             let y = (y_coord + y_line) as usize % SCREEN_HEIGHT;
-
-                            // get the pixel's index from the 1 dimensional array.
                             let idx = x + (SCREEN_WIDTH * y);
                             flipped |= self.screen[idx];
                             self.screen[idx] ^= true;
                         }
                     }
                 }
-                if flipped {
-                    self.v_reg[0xF] = 1;
-                } else {
-                    self.v_reg[0xF] = 0;
-                }
+                self.v_reg[0xF] = if flipped { 1 } else { 0 };
+                self.draw_completed = false;
             }
             // SKIP KEY PRESS
             (0xE, _, 9, 0xE) => {
