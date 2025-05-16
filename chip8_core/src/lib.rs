@@ -437,7 +437,6 @@ impl Emulator {
         }
         if self.st > 0 {
             self.st -= 1;
-        } else {
         }
     }
 }
