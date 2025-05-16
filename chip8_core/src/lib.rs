@@ -292,8 +292,8 @@ impl Emulator {
             }
             // DRAW!
             (0xD, _, _, _) => {
-                let x_coord = self.v_reg[digit2 as usize] as usize;
-                let y_coord = self.v_reg[digit3 as usize] as usize;
+                let x_coord = self.v_reg[digit2 as usize] as usize % SCREEN_WIDTH;
+                let y_coord = self.v_reg[digit3 as usize] as usize % SCREEN_HEIGHT;
                 let num_rows = digit4;
 
                 // keep track of whether any pixels were flipped.
@@ -304,13 +304,21 @@ impl Emulator {
                     let addr = self.i_reg + y_line as u16;
                     let pixels = self.ram[addr as usize];
 
-                    let y = (y_coord + y_line) & 0x1F;
+                    let y = y_coord + y_line;
+                    if y >= SCREEN_HEIGHT {
+                        continue;
+                    }
 
                     // iterate over each column in the current row
                     for x_line in 0..8 {
+
+
                         // this fetches the value of the current bit with a mask.
                         if (pixels & (0b1000_0000 >> x_line)) != 0 {
-                            let x = (x_coord + x_line) & 0x3F;
+                            let x = x_coord + x_line;
+                            if x >= SCREEN_WIDTH {
+                                continue;
+                            }
                             let idx = x + (SCREEN_WIDTH * y);
                             flipped |= self.screen[idx];
                             self.screen[idx] ^= true;
