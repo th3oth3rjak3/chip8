@@ -184,18 +184,21 @@ impl Emulator {
             }
             // VX |= VY
             (8, _, _, 1) => {
+                self.v_reg[0xF] = 0;
                 let x = digit2 as usize;
                 let y = digit3 as usize;
                 self.v_reg[x] |= self.v_reg[y];
             }
             // VX &= VY
             (8, _, _, 2) => {
+                self.v_reg[0xF] = 0;
                 let x = digit2 as usize;
                 let y = digit3 as usize;
                 self.v_reg[x] &= self.v_reg[y];
             }
             // VX ^= VY
             (8, _, _, 3) => {
+                self.v_reg[0xF] = 0;
                 let x = digit2 as usize;
                 let y = digit3 as usize;
                 self.v_reg[x] ^= self.v_reg[y];
@@ -388,6 +391,7 @@ impl Emulator {
                 for idx in 0..=x {
                     self.ram[i + idx] = self.v_reg[idx];
                 }
+                self.i_reg += (x + 1) as u16;
             }
             // FX65 load I into V0 - VX
             (0xF, _, 6, 5) => {
@@ -396,6 +400,7 @@ impl Emulator {
                 for idx in 0..=x {
                     self.v_reg[idx] = self.ram[i + idx];
                 }
+                self.i_reg += (x + 1) as u16;
             }
             (_, _, _, _) => unimplemented!("Unimplemented OpCode: {}", op),
         }

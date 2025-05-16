@@ -3,7 +3,7 @@ use std::env;
 use sdl2::event::Event;
 use std::fs::File;
 use std::io::Read;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
 use sdl2::rect::Rect;
@@ -44,7 +44,7 @@ fn main() {
     rom.read_to_end(&mut buffer).expect("Unable to read ROM");
     chip8.load_rom(&buffer);
 
-    let mut last_timer_update = Instant::now();
+    let mut last_frame = Instant::now();
     
     'gameLoop: loop {
         for evt in event_pump.poll_iter() {
@@ -69,8 +69,12 @@ fn main() {
         for _ in 0..TICKS_PER_FRAME {
             chip8.tick();
         }
-        chip8.tick_timers();
-        draw_screen(&chip8, &mut canvas);
+
+        if last_frame.elapsed() >= Duration::from_millis(16) {
+            chip8.tick_timers();
+            draw_screen(&chip8, &mut canvas);
+            last_frame = Instant::now();
+        }
     }
 }
 
@@ -100,10 +104,10 @@ fn draw_screen(emulator: &Emulator, canvas: &mut Canvas<Window>) {
 
 fn key2btn(key: Keycode) -> Option<usize> {
     match key {
-        Keycode::Num1 => Some(0x1),
-        Keycode::Num2 => Some(0x2),
-        Keycode::Num3 => Some(0x3),
-        Keycode::Num4 => Some(0xC),
+        Keycode::NUM_1 => Some(0x1),
+        Keycode::NUM_2 => Some(0x2),
+        Keycode::NUM_3 => Some(0x3),
+        Keycode::NUM_4 => Some(0xC),
         Keycode::Q => Some(0x4),
         Keycode::W => Some(0x5),
         Keycode::E => Some(0x6),
