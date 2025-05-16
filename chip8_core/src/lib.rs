@@ -22,7 +22,7 @@ const FONTSET: [u8; FONTSET_SIZE] = [
     0xF0, 0x80, 0x80, 0x80, 0xF0, // C
     0xE0, 0x90, 0x90, 0x90, 0xE0, // D
     0xF0, 0x80, 0xF0, 0x80, 0xF0, // E
-    0xF0, 0x80, 0xF0, 0x80, 0x80  // F
+    0xF0, 0x80, 0xF0, 0x80, 0x80, // F
 ];
 
 pub struct Emulator {
@@ -35,8 +35,9 @@ pub struct Emulator {
     sp: u16,
     keys: [bool; NUM_KEYS],
     dt: u8,
-    st: u8,
+    pub st: u8,
     pub draw_completed: bool,
+    waiting_for_key_release: Option<usize>,
 }
 
 impl Emulator {
@@ -53,10 +54,15 @@ impl Emulator {
             dt: 0,
             st: 0,
             draw_completed: true,
+            waiting_for_key_release: None,
         };
 
         new_emulator.ram[..FONTSET_SIZE].copy_from_slice(&FONTSET);
         new_emulator
+    }
+
+    pub fn is_key_pressed(&self) -> bool {
+        self.keys.iter().any(|k| *k)
     }
 
     pub fn push(&mut self, val: u16) {
@@ -84,6 +90,10 @@ impl Emulator {
     }
 
     pub fn tick(&mut self) {
+        if self.waiting_for_key_release.is_some() {
+            return;
+        }
+
         // FETCH
         let op = self.fetch();
 
@@ -94,11 +104,15 @@ impl Emulator {
     pub fn get_display(&self) -> &[bool] {
         &self.screen
     }
-    
+
     pub fn keypress(&mut self, idx: usize, pressed: bool) {
         self.keys[idx] = pressed;
+
+        if !pressed && Some(idx) == self.waiting_for_key_release {
+            self.waiting_for_key_release = None;
+        }
     }
-    
+
     pub fn load_rom(&mut self, data: &[u8]) {
         let start = START_ADDR as usize;
         let end = start + data.len();
@@ -211,7 +225,7 @@ impl Emulator {
                 let y = digit3 as usize;
                 let (new_vx, carry) = self.v_reg[x].overflowing_add(self.v_reg[y]);
                 let new_vf = if carry { 1 } else { 0 };
-                
+
                 self.v_reg[x] = new_vx;
                 self.v_reg[0xF] = new_vf;
             }
@@ -225,11 +239,12 @@ impl Emulator {
                 self.v_reg[x] = new_vx;
                 self.v_reg[0xF] = new_vf;
             }
-            // VX >>= 1
+            // VX = VY >> 1
             (8, _, _, 6) => {
                 let x = digit2 as usize;
+                let y = digit3 as usize;
                 let lsb = self.v_reg[x] & 0x1;
-                self.v_reg[x] >>= 1;
+                self.v_reg[x] = self.v_reg[y] >> 1;
                 self.v_reg[0xF] = lsb;
             }
             // VY -= VX
@@ -242,11 +257,12 @@ impl Emulator {
                 self.v_reg[x] = new_vx;
                 self.v_reg[0xF] = new_vf;
             }
-            // VX <<= 1
+            // VX = VY << 1
             (8, _, _, 0xE) => {
                 let x = digit2 as usize;
-                let msb = (self.v_reg[x] >> 7) & 0x1;
-                self.v_reg[x] <<= 1;
+                let y = digit3 as usize;
+                let msb = (self.v_reg[y] >> 7) & 0x1;
+                self.v_reg[x] = self.v_reg[y] << 1;
                 self.v_reg[0xF] = msb;
             }
             // SKIP VX != VY
@@ -276,25 +292,25 @@ impl Emulator {
             }
             // DRAW!
             (0xD, _, _, _) => {
-                let x_coord = self.v_reg[digit2 as usize] as u16;
-                let y_coord = self.v_reg[digit3 as usize] as u16;
+                let x_coord = self.v_reg[digit2 as usize] as usize;
+                let y_coord = self.v_reg[digit3 as usize] as usize;
                 let num_rows = digit4;
 
                 // keep track of whether any pixels were flipped.
                 let mut flipped = false;
                 // Iterate over each row in the sprite.
-                for y_line in 0..num_rows {
+                for y_line in 0..num_rows as usize {
                     // get the memory address where our row's data is stored.
                     let addr = self.i_reg + y_line as u16;
                     let pixels = self.ram[addr as usize];
 
+                    let y = (y_coord + y_line) & 0x1F;
+
                     // iterate over each column in the current row
                     for x_line in 0..8 {
-                        
                         // this fetches the value of the current bit with a mask.
                         if (pixels & (0b1000_0000 >> x_line)) != 0 {
-                            let x = (x_coord + x_line) as usize % SCREEN_WIDTH;
-                            let y = (y_coord + y_line) as usize % SCREEN_HEIGHT;
+                            let x = (x_coord + x_line) & 0x3F;
                             let idx = x + (SCREEN_WIDTH * y);
                             flipped |= self.screen[idx];
                             self.screen[idx] ^= true;
@@ -330,17 +346,21 @@ impl Emulator {
             // WAIT KEY
             (0xF, _, 0, 0xA) => {
                 let x = digit2 as usize;
-                let mut pressed = false;
+                let mut pressed_key = None;
+
                 for i in 0..self.keys.len() {
                     if self.keys[i] {
-                        self.v_reg[x] = i as u8;
-                        pressed = true;
+                        pressed_key = Some(i);
                         break;
                     }
                 }
-                // If no key was pressed, allow other user input to be processed
-                // then start again by jumping back to the top of the instruction.
-                if !pressed {
+
+                if let Some(key_idx) = pressed_key {
+                    // Key is pressed, store its value and remember we're waiting for it to be released
+                    self.v_reg[x] = key_idx as u8;
+                    self.waiting_for_key_release = Some(key_idx);
+                } else {
+                    // No key pressed, repeat this instruction
                     self.pc -= 2;
                 }
             }
@@ -376,7 +396,7 @@ impl Emulator {
                 let tens = (vx % 100) / 10;
                 // Fetch the ones digit by tossing the hundreds and the tens
                 let ones = vx % 10;
-                
+
                 self.ram[self.i_reg as usize] = hundreds;
                 self.ram[self.i_reg as usize + 1] = tens;
                 self.ram[self.i_reg as usize + 2] = ones;
@@ -403,16 +423,13 @@ impl Emulator {
         }
     }
 
-    pub fn tick_timers(&mut self) {
+    pub fn tick_timers(&mut self)    {
         if self.dt > 0 {
             self.dt -= 1;
         }
-
         if self.st > 0 {
-            if self.st == 1 {
-                // BEEP
-            }
             self.st -= 1;
+        } else {
         }
     }
 }

@@ -1,4 +1,5 @@
 use chip8_core::*;
+use sdl2::audio::{AudioCallback, AudioSpecDesired, AudioStatus};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::Color;
@@ -13,7 +14,29 @@ use std::time::{Duration, Instant};
 const SCALE: u32 = 15;
 const WINDOW_WIDTH: u32 = (SCREEN_WIDTH as u32) * SCALE;
 const WINDOW_HEIGHT: u32 = (SCREEN_HEIGHT as u32) * SCALE;
-const TICKS_PER_FRAME: u32 = 10;
+const TICKS_PER_FRAME: u32 = 1;
+
+struct SquareWave {
+    phase_inc: f32,
+    phase: f32,
+    volume: f32,
+}
+
+impl AudioCallback for SquareWave {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        // Generate a square wave
+        for x in out.iter_mut() {
+            *x = if self.phase <= 0.5 {
+                self.volume
+            } else {
+                -self.volume
+            };
+            self.phase = (self.phase + self.phase_inc) % 1.0;
+        }
+    }
+}
 
 fn main() {
     let args: Vec<_> = env::args().collect();
@@ -25,6 +48,28 @@ fn main() {
     // Setup SDL
     let sdl_context = sdl2::init().unwrap();
     let video_subsystem = sdl_context.video().unwrap();
+    let audio_subsystem = sdl_context.audio().unwrap();
+
+    let desired_spec = AudioSpecDesired {
+        freq: Some(44100),
+        channels: Some(1), // mono
+        samples: None,     // default sample size
+    };
+
+    // Set up the audio device
+    let device = audio_subsystem
+        .open_playback(None, &desired_spec, |spec| {
+            let frequency = 440.0; // A4 note frequency in Hz
+            let phase_inc = frequency / spec.freq as f32;
+
+            SquareWave {
+                phase_inc,
+                phase: 0.0,
+                volume: 0.25,
+            }
+        })
+        .unwrap();
+
     let window = video_subsystem
         .window("Chip-8 Emulator", WINDOW_WIDTH, WINDOW_HEIGHT)
         .position_centered()
@@ -59,6 +104,11 @@ fn main() {
                 } => {
                     if let Some(k) = key2btn(key) {
                         chip8.keypress(k, true);
+                    } else {
+                        if key == Keycode::Space {
+                            chip8.reset();
+                            chip8.load_rom(&buffer);
+                        }
                     }
                 }
                 Event::KeyUp {
@@ -78,6 +128,25 @@ fn main() {
             }
         }
 
+        match device.status() {
+            AudioStatus::Playing => {},
+            AudioStatus::Paused => {}
+            AudioStatus::Stopped => {}
+        }
+        
+        match device.status() {
+            AudioStatus::Playing => {
+                if chip8.st == 0 {
+                    device.pause();
+                }
+            }
+            AudioStatus::Paused | AudioStatus::Stopped => {
+                if chip8.st > 0 {
+                    device.resume();
+                }
+            }
+        }
+        
         if last_frame.elapsed() >= Duration::from_millis(16) {
             draw_screen(&chip8, &mut canvas);
             chip8.draw_completed = true;
